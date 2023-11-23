@@ -26,6 +26,29 @@
 #include <stdarg.h>
 #include <signal.h>
 
+// #include "common/log.h"
+
+#ifdef __ANDROID__
+   #include <android/log.h>
+
+   #define LOG_TAG "libllamarpc"
+   #define LOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, __VA_ARGS__)
+   #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+   #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+   #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+   #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+  #define LOG_TAG "libllamarpc"
+  #define LOGV(...) printf("V/" LOG_TAG ": " __VA_ARGS__)
+  #define LOGD(...) printf("D/" LOG_TAG ": " __VA_ARGS__)
+  #define LOGI(...) printf("I/" LOG_TAG ": " __VA_ARGS__)
+  #define LOGW(...) printf("W/" LOG_TAG ": " __VA_ARGS__)
+  #define LOGE(...) fprintf(stderr, "E/" LOG_TAG ": " __VA_ARGS__)
+#endif
+
+#define LOG(str, ...) LOGI(str, ##__VA_ARGS__)
+// #define LOG(str, ...) LOGI("%s" str, "", __VA_ARGS__, "")
+
 #ifdef GGML_USE_METAL
 #include <unistd.h>
 #endif
@@ -20897,11 +20920,41 @@ struct gguf_context * gguf_init_empty(void) {
     return ctx;
 }
 
+// struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_params params) {
+//     FILE * file = fopen(fname, "rb");
+//     if (!file) {
+//         return NULL;
+//     }
+
+//     // offset from start of file
+//     size_t offset = 0;
+
+//     uint32_t magic = 0;
+
+//     // check the magic before making allocations
+//     {
+//         gguf_fread_el(file, &magic, sizeof(magic), &offset);
+
+//         if (magic != GGUF_MAGIC) {
+//             fprintf(stderr, "%s: invalid magic number %08x\n", __func__, magic);
+//             fclose(file);
+//             return NULL;
+//         }
+//     }
+
+//     bool ok = true;
+
+//     struct gguf_context * ctx = GGML_ALIGNED_MALLOC(sizeof(struct gguf_context));
+
 struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_params params) {
+    LOG("Entering gguf_init_from_file function");
+
     FILE * file = fopen(fname, "rb");
     if (!file) {
+        LOG("Failed to open file: %s\n", fname);
         return NULL;
     }
+    LOG("Successfully opened file: %s\n", fname);
 
     // offset from start of file
     size_t offset = 0;
@@ -20910,20 +20963,57 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
 
     // check the magic before making allocations
     {
+        LOG("Reading magic number from file...\n");
         gguf_fread_el(file, &magic, sizeof(magic), &offset);
 
         if (magic != GGUF_MAGIC) {
             fprintf(stderr, "%s: invalid magic number %08x\n", __func__, magic);
+            LOG("Invalid magic number: %08x\n", magic);
             fclose(file);
             return NULL;
         }
+        LOG("Valid magic number: %08x\n", magic);
     }
 
     bool ok = true;
 
     struct gguf_context * ctx = GGML_ALIGNED_MALLOC(sizeof(struct gguf_context));
+    LOG("Allocating memory for gguf_context\n");
 
-    // read the header
+    // // read the header
+    // {
+    //     ctx->header.magic = magic;
+
+    //     ctx->kv    = NULL;
+    //     ctx->infos = NULL;
+    //     ctx->data  = NULL;
+
+    //     ok = ok && gguf_fread_el(file, &ctx->header.version,   sizeof(ctx->header.version),   &offset);
+
+    //     if (ctx->header.version == 1) {
+    //         // NOTE: temporary handling of GGUFv1 >> remove after Oct 2023
+    //         uint32_t n_tensors = 0;
+    //         uint32_t n_kv      = 0;
+
+    //         ok = ok && gguf_fread_el(file, &n_tensors, sizeof(n_tensors), &offset);
+    //         ok = ok && gguf_fread_el(file, &n_kv,      sizeof(n_kv),      &offset);
+
+    //         ctx->header.n_tensors = n_tensors;
+    //         ctx->header.n_kv      = n_kv;
+    //     } else {
+    //         ok = ok && gguf_fread_el(file, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors), &offset);
+    //         ok = ok && gguf_fread_el(file, &ctx->header.n_kv,      sizeof(ctx->header.n_kv),      &offset);
+    //     }
+
+    //     if (!ok) {
+    //         fprintf(stderr, "%s: failed to read header\n", __func__);
+    //         fclose(file);
+    //         gguf_free(ctx);
+    //         return NULL;
+    //     }
+    // }
+
+   // read the header
     {
         ctx->header.magic = magic;
 
@@ -20931,6 +21021,7 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
         ctx->infos = NULL;
         ctx->data  = NULL;
 
+        LOG("Reading version from file...\n");
         ok = ok && gguf_fread_el(file, &ctx->header.version,   sizeof(ctx->header.version),   &offset);
 
         if (ctx->header.version == 1) {
@@ -20938,22 +21029,27 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
             uint32_t n_tensors = 0;
             uint32_t n_kv      = 0;
 
+            LOG("Reading n_tensors and n_kv from file...\n");
             ok = ok && gguf_fread_el(file, &n_tensors, sizeof(n_tensors), &offset);
             ok = ok && gguf_fread_el(file, &n_kv,      sizeof(n_kv),      &offset);
 
             ctx->header.n_tensors = n_tensors;
             ctx->header.n_kv      = n_kv;
         } else {
+            LOG("Reading n_tensors and n_kv from file...\n");
             ok = ok && gguf_fread_el(file, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors), &offset);
             ok = ok && gguf_fread_el(file, &ctx->header.n_kv,      sizeof(ctx->header.n_kv),      &offset);
         }
 
         if (!ok) {
             fprintf(stderr, "%s: failed to read header\n", __func__);
+            LOG("Failed to read header from file\n");
             fclose(file);
             gguf_free(ctx);
             return NULL;
         }
+
+        // LOG("Successfully read header from file\n");
     }
 
     // NOTE: temporary handling of GGUFv1 >> remove after Oct 2023
@@ -21209,6 +21305,8 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     }
 
     fclose(file);
+
+    LOG("Successfully closed file: %s\n", fname);
 
     return ctx;
 }

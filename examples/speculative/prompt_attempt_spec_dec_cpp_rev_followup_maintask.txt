@@ -1,0 +1,9 @@
+Main task analyze the three source code files I give you. First two files 'rpcserver.h' 'rpcserver.cpp' introduce my own json rpc code for LLM sampling for llama.cpp, the other file 'speculative.cpp' is a speculative decoding example from the llama.cpp repo. Using speculative.cpp as a refernce and template I need you to analyze possible integration issues, plan out step by step, and write a speculative decoding (sampling) API integrated into my json rpc source code. Note that I had to omit some parts of librpcserver.cpp source code for brevity.
+
+The API surface for speculative decoding I would like looks like this (ignore the sync sampling API as legacy):
+```C++
+void init_async(const char* cmd, bool init_draft_model); // extended implementation that allows to call it a second time to init a separate draft model
+const char *poll_system_status(); // extended to output info about draft model status if present or loading
+const char* async_completion_init(const char* req_json); // extended json option allows speculative sampling
+/* ... */
+```

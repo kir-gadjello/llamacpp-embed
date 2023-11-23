@@ -500,6 +500,22 @@ else ()
   set(CMAKE_GENERATOR_PLATFORM_LWR "")
 endif ()
 
+if (ANDROID)
+    # other Android-specific configurations...
+
+    # find the log library
+    find_library(
+        log-lib
+        log
+#        PATHS ${ANDROID_NDK_PATH}/sources/android/native_app_glue
+#        NO_DEFAULT_PATH
+    )
+    message(STATUS "Found log library: ${log-lib}")
+
+    # link the log library to your targets
+    add_link_options(${log-lib})
+endif()
+
 if (NOT MSVC)
     if (LLAMA_STATIC)
         add_link_options(-static)
@@ -517,7 +533,7 @@ if ((${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm") OR (${CMAKE_SYSTEM_PROCESSOR} MATC
     if (MSVC)
         add_compile_definitions(__ARM_NEON)
         add_compile_definitions(__ARM_FEATURE_FMA)
-        add_compile_definitions(__ARM_FEATURE_DOTPROD)
+        # add_compile_definitions(__ARM_FEATURE_DOTPROD)
         # add_compile_definitions(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) # MSVC doesn't support vdupq_n_f16, vld1q_f16, vst1q_f16
         add_compile_definitions(__aarch64__) # MSVC defines _M_ARM64 instead
     else()

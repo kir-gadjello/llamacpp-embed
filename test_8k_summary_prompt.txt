@@ -1,0 +1,664 @@
+As a professional C++ software engineer, analyze the source code file I give you, even if it is incomplete. 
+Output only a processed source code:
+For every top-level function, structure, class method, replace the declaration body with a code comment that contains a a concise but also complete functional summary of its logic useful to someone programming against it and a list of called functions and methods (exclude standard library and the like).
+Output only the code block.
+```C++
+
+struct llama_cparams {
+    uint32_t n_ctx;       // context size used during inference
+    uint32_t n_batch;
+    uint32_t n_threads;       // number of threads to use for generation
+    uint32_t n_threads_batch; // number of threads to use for batch processing
+
+    float rope_freq_base;
+    float rope_freq_scale;
+
+    bool mul_mat_q;
+};
+
+struct llama_layer {
+    // normalization
+    struct ggml_tensor * attn_norm;
+    struct ggml_tensor * attn_norm_b;
+    struct ggml_tensor * attn_norm_2;
+    struct ggml_tensor * attn_norm_2_b;
+    struct ggml_tensor * attn_q_norm;
+    struct ggml_tensor * attn_q_norm_b;
+    struct ggml_tensor * attn_k_norm;
+    struct ggml_tensor * attn_k_norm_b;
+
+    // attention
+    struct ggml_tensor * wq;
+    struct ggml_tensor * wk;
+    struct ggml_tensor * wv;
+    struct ggml_tensor * wo;
+    struct ggml_tensor * wqkv;
+
+    // attention bias
+    struct ggml_tensor * bo;
+    struct ggml_tensor * bqkv;
+
+    // normalization
+    struct ggml_tensor * ffn_norm;
+    struct ggml_tensor * ffn_norm_b;
+
+    // ff
+    struct ggml_tensor * w1; // ffn_gate
+    struct ggml_tensor * w2; // ffn_down
+    struct ggml_tensor * w3; // ffn_up
+
+    // ff bias
+    struct ggml_tensor * b2; // ffn_down
+    struct ggml_tensor * b3; // ffn_up
+};
+
+struct llama_kv_cell {
+    llama_pos pos   = -1;
+    llama_pos delta = 0;
+
+    std::set<llama_seq_id> seq_id;
+
+    bool has_seq_id(const llama_seq_id & id) const {
+        return seq_id.find(id) != seq_id.end();
+    }
+};
+
+// ring-buffer of cached KV data
+struct llama_kv_cache {
+    bool has_shift = false;
+
+    // Note: The value of head isn't only used to optimize searching
+    // for a free KV slot. llama_decode_internal also uses it, so it
+    // cannot be freely changed after a slot has been allocated.
+    uint32_t head = 0;
+    uint32_t size = 0;
+
+    // computed before each graph build
+    uint32_t n = 0;
+
+    std::vector<llama_kv_cell> cells;
+
+    struct ggml_tensor * k = NULL;
+    struct ggml_tensor * v = NULL;
+
+    struct ggml_context * ctx = NULL;
+
+    llama_buffer buf;
+
+    ~llama_kv_cache() {
+        if (ctx) {
+            ggml_free(ctx);
+        }
+
+#ifdef GGML_USE_CUBLAS
+        ggml_cuda_free_data(k);
+        ggml_cuda_free_data(v);
+#endif // GGML_USE_CUBLAS
+    }
+};
+
+struct llama_vocab {
+    using id    = int32_t;
+    using token = std::string;
+    using ttype = llama_token_type;
+
+    struct token_data {
+        token text;
+        float score;
+        ttype type;
+    };
+
+    enum llama_vocab_type type = LLAMA_VOCAB_TYPE_SPM;
+
+    std::unordered_map<token, id> token_to_id;
+    std::vector<token_data>       id_to_token;
+
+    std::map<std::pair<std::string, std::string>, int> bpe_ranks;
+
+    // default LLaMA special tokens
+    id special_bos_id = 1;
+    id special_eos_id = 2;
+    id special_unk_id = 0;
+    id special_sep_id = -1;
+    id special_pad_id = -1;
+
+    id linefeed_id = 13;
+    id special_prefix_id = 32007;
+    id special_middle_id = 32009;
+    id special_suffix_id = 32008;
+    id special_eot_id = 32010;
+
+    int find_bpe_rank(std::string token_left, std::string token_right) const {
+        replace_all(token_left,  " ",  "\u0120");
+        replace_all(token_left,  "\n", "\u010A");
+        replace_all(token_right, " ",  "\u0120");
+        replace_all(token_right, "\n", "\u010A");
+
+        auto it = bpe_ranks.find(std::make_pair(token_left, token_right));
+        if (it == bpe_ranks.end()) {
+            return -1;
+        }
+
+        return it->second;
+    }
+};
+
+struct llama_model {
+    e_model     type  = MODEL_UNKNOWN;
+    llm_arch    arch  = LLM_ARCH_UNKNOWN;
+    llama_ftype ftype = LLAMA_FTYPE_ALL_F32;
+
+    std::string name = "n/a";
+
+    llama_hparams hparams = {};
+    llama_vocab   vocab;
+
+    struct ggml_tensor * tok_embeddings;
+    struct ggml_tensor * pos_embeddings;
+    struct ggml_tensor * tok_norm;
+    struct ggml_tensor * tok_norm_b;
+
+    struct ggml_tensor * output_norm;
+    struct ggml_tensor * output_norm_b;
+    struct ggml_tensor * output;
+
+    std::vector<llama_layer> layers;
+
+    int n_gpu_layers;
+
+    // context
+    struct ggml_context * ctx = NULL;
+
+    // the model memory buffer
+    llama_buffer buf;
+
+    // model memory mapped file
+    std::unique_ptr<llama_mmap> mapping;
+
+    // objects representing data potentially being locked in memory
+    llama_mlock mlock_buf;
+    llama_mlock mlock_mmap;
+
+    // for quantize-stats only
+    std::vector<std::pair<std::string, struct ggml_tensor *>> tensors_by_name;
+
+    int64_t t_load_us = 0;
+    int64_t t_start_us = 0;
+
+    ~llama_model() {
+        if (ctx) {
+            ggml_free(ctx);
+        }
+
+#ifdef GGML_USE_CUBLAS
+        for (size_t i = 0; i < tensors_by_name.size(); ++i) {
+            ggml_cuda_free_data(tensors_by_name[i].second);
+        }
+        ggml_cuda_free_scratch();
+#elif defined(GGML_USE_CLBLAST)
+        for (size_t i = 0; i < tensors_by_name.size(); ++i) {
+            ggml_cl_free_data(tensors_by_name[i].second);
+        }
+#endif
+    }
+};
+
+struct llama_context {
+    llama_context(const llama_model & model) : model(model), t_start_us(model.t_start_us), t_load_us(model.t_load_us) {}
+    ~llama_context() {
+#ifdef GGML_USE_METAL
+        if (ctx_metal) {
+            ggml_metal_free(ctx_metal);
+        }
+#endif
+        if (alloc) {
+            ggml_allocr_free(alloc);
+        }
+    }
+
+    llama_cparams cparams;
+
+    const llama_model & model;
+
+    // key + value cache for the self attention
+    struct llama_kv_cache kv_self;
+
+    std::mt19937 rng;
+
+    bool has_evaluated_once = false;
+
+    int64_t t_start_us;
+    int64_t t_load_us;
+    int64_t t_sample_us = 0;
+    int64_t t_p_eval_us = 0;
+    int64_t t_eval_us   = 0;
+
+    int32_t n_sample = 0; // number of tokens sampled
+    int32_t n_p_eval = 0; // number of tokens in eval calls for the prompt (with batch size > 1)
+    int32_t n_eval   = 0; // number of eval calls
+
+    // decode output (2-dimensional array: [n_tokens][n_vocab])
+    std::vector<float> logits;
+    bool logits_all = false;
+
+    // input embedding (1-dimensional array: [n_embd])
+    std::vector<float> embedding;
+
+    // reusable buffer for `struct ggml_graph_plan.work_data`
+    std::vector<uint8_t> work_buffer;
+
+    // memory buffers used to evaluate the model
+    llama_buffer buf_compute;
+
+    llama_buffer buf_alloc;
+    ggml_allocr * alloc = NULL;
+
+#ifdef GGML_USE_METAL
+    ggml_metal_context * ctx_metal = NULL;
+#endif
+
+#ifdef GGML_USE_MPI
+    ggml_mpi_context * ctx_mpi = NULL;
+#endif
+};
+
+//
+// kv cache helpers
+//
+
+static bool llama_kv_cache_init(
+        const struct llama_hparams & hparams,
+             struct llama_kv_cache & cache,
+                         ggml_type   wtype,
+                          uint32_t   n_ctx,
+                               int   n_gpu_layers) {
+    const uint32_t n_embd  = hparams.n_embd_gqa();
+    const uint32_t n_layer = hparams.n_layer;
+
+    const int64_t n_mem      = n_layer*n_ctx;
+    const int64_t n_elements = n_embd*n_mem;
+
+    cache.has_shift = false;
+
+    cache.head = 0;
+    cache.size = n_ctx;
+
+    cache.cells.clear();
+    cache.cells.resize(n_ctx);
+
+    // TODO: this should be:
+    //       cache.buf.resize(2u*n_elements*ggml_type_size(wtype) + 2u*ggml_tensor_overhead());
+    //       change it and test that it works
+    cache.buf.resize(2u*n_elements*ggml_type_size(wtype) + 2u*MB);
+    memset(cache.buf.data, 0, cache.buf.size);
+
+    struct ggml_init_params params;
+    params.mem_size   = cache.buf.size;
+    params.mem_buffer = cache.buf.data;
+    params.no_alloc   = false;
+
+    cache.ctx = ggml_init(params);
+
+    if (!cache.ctx) {
+        LLAMA_LOG_ERROR("%s: failed to allocate memory for kv cache\n", __func__);
+        return false;
+    }
+
+    cache.k = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
+    cache.v = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
+    ggml_set_name(cache.k, "cache_k");
+    ggml_set_name(cache.v, "cache_v");
+
+    (void) n_gpu_layers;
+#ifdef GGML_USE_CUBLAS
+    size_t vram_kv_cache = 0;
+
+    if (n_gpu_layers > (int)n_layer + 1) {
+        ggml_cuda_assign_buffers_no_scratch(cache.v);
+        LLAMA_LOG_INFO("%s: offloading v cache to GPU\n", __func__);
+        vram_kv_cache += ggml_nbytes(cache.v);
+    }
+    if (n_gpu_layers > (int)n_layer + 2) {
+        ggml_cuda_assign_buffers_no_scratch(cache.k);
+        LLAMA_LOG_INFO("%s: offloading k cache to GPU\n", __func__);
+        vram_kv_cache += ggml_nbytes(cache.k);
+    }
+    if (vram_kv_cache > 0) {
+        LLAMA_LOG_INFO("%s: VRAM kv self = %.2f MB\n", __func__, vram_kv_cache / 1024.0 / 1024.0);
+    }
+#endif // GGML_USE_CUBLAS
+
+    return true;
+}
+
+// find an empty slot of size "n_tokens" in the cache
+// updates the cache head
+// Note: On success, it's important that cache.head points
+// to the first cell of the slot.
+static bool llama_kv_cache_find_slot(
+           struct llama_kv_cache & cache,
+        const struct llama_batch & batch) {
+    const uint32_t n_ctx    = cache.size;
+    const uint32_t n_tokens = batch.n_tokens;
+
+    if (n_tokens > n_ctx) {
+        LLAMA_LOG_ERROR("%s: n_tokens=%d > n_ctx=%d\n", __func__, n_tokens, n_ctx);
+        return false;
+    }
+
+    uint32_t n_tested = 0;
+
+    while (true) {
+        if (cache.head + n_tokens > n_ctx) {
+            n_tested += n_ctx - cache.head;
+            cache.head = 0;
+            continue;
+        }
+
+        bool found = true;
+        for (uint32_t i = 0; i < n_tokens; i++) {
+            if (cache.cells[cache.head + i].pos >= 0) {
+                found = false;
+                cache.head += i + 1;
+                n_tested   += i + 1;
+                break;
+            }
+        }
+
+        if (found) {
+            break;
+        }
+
+        if (n_tested >= n_ctx) {
+            //LLAMA_LOG_ERROR("%s: failed to find a slot for %d tokens\n", __func__, n_tokens);
+            return false;
+        }
+    }
+
+    for (uint32_t i = 0; i < n_tokens; i++) {
+        cache.cells[cache.head + i].pos = batch.pos[i];
+        cache.cells[cache.head + i].seq_id.insert(batch.seq_id[i]);
+    }
+
+    return true;
+}
+
+// find how many cells are currently in use
+static int32_t llama_kv_cache_cell_max(const struct llama_kv_cache & cache) {
+    for (uint32_t i = cache.size - 1; i > 0; --i) {
+        if (cache.cells[i].pos >= 0 && !cache.cells[i].seq_id.empty()) {
+            return i + 1;
+        }
+    }
+
+    return 0;
+}
+
+static void llama_kv_cache_tokens_rm(struct llama_kv_cache & cache, int32_t c0, int32_t c1) {
+    if (c0 < 0) c0 = 0;
+    if (c1 < 0) c1 = cache.size;
+
+    for (int32_t i = c0; i < c1; ++i) {
+        cache.cells[i].pos = -1;
+        cache.cells[i].seq_id.clear();
+    }
+
+    // Searching for a free slot can start here since we know it will be empty.
+    cache.head = uint32_t(c0);
+}
+
+static void llama_kv_cache_seq_rm(
+        struct llama_kv_cache & cache,
+                 llama_seq_id   seq_id,
+                    llama_pos   p0,
+                    llama_pos   p1) {
+    uint32_t new_head = cache.size;
+
+    if (p0 < 0) p0 = 0;
+    if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
+
+    for (uint32_t i = 0; i < cache.size; ++i) {
+        if (cache.cells[i].has_seq_id(seq_id) && cache.cells[i].pos >= p0 && cache.cells[i].pos < p1) {
+            cache.cells[i].seq_id.erase(seq_id);
+            if (cache.cells[i].seq_id.empty()) {
+                cache.cells[i].pos = -1;
+                if (new_head == cache.size) new_head = i;
+            }
+        }
+    }
+
+    // If we freed up a slot, set head to it so searching can start there.
+    if (new_head != cache.size) cache.head = new_head;
+}
+
+static void llama_kv_cache_seq_cp(
+        struct llama_kv_cache & cache,
+                 llama_seq_id   seq_id_src,
+                 llama_seq_id   seq_id_dst,
+                    llama_pos   p0,
+                    llama_pos   p1) {
+    if (p0 < 0) p0 = 0;
+    if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
+
+    cache.head = 0;
+
+    for (uint32_t i = 0; i < cache.size; ++i) {
+        if (cache.cells[i].has_seq_id(seq_id_src) && cache.cells[i].pos >= p0 && cache.cells[i].pos < p1) {
+            cache.cells[i].seq_id.insert(seq_id_dst);
+        }
+    }
+}
+
+static void llama_kv_cache_seq_keep(struct llama_kv_cache & cache, llama_seq_id seq_id) {
+    uint32_t new_head = cache.size;
+
+    for (uint32_t i = 0; i < cache.size; ++i) {
+        if (!cache.cells[i].has_seq_id(seq_id)) {
+            cache.cells[i].pos = -1;
+            cache.cells[i].seq_id.clear();
+            if (new_head == cache.size) new_head = i;
+        }
+    }
+
+    // If we freed up a slot, set head to it so searching can start there.
+    if (new_head != cache.size) cache.head = new_head;
+}
+
+static void llama_kv_cache_seq_shift(
+        struct llama_kv_cache & cache,
+                 llama_seq_id   seq_id,
+                    llama_pos   p0,
+                    llama_pos   p1,
+                    llama_pos   delta) {
+    uint32_t new_head = cache.size;
+
+    if (p0 < 0) p0 = 0;
+    if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
+
+    for (uint32_t i = 0; i < cache.size; ++i) {
+        if (cache.cells[i].has_seq_id(seq_id) && cache.cells[i].pos >= p0 && cache.cells[i].pos < p1) {
+            cache.cells[i].pos += delta;
+            if (cache.cells[i].pos < 0) {
+                cache.cells[i].pos = -1;
+                cache.cells[i].seq_id.clear();
+                if (new_head == cache.size) new_head = i;
+            } else {
+                cache.has_shift = true;
+                cache.cells[i].delta = delta;
+            }
+        }
+    }
+
+    // If we freed up a slot, set head to it so searching can start there.
+    // Otherwise we just start the next search from the beginning.
+    cache.head = new_head != cache.size ? new_head : 0;
+}
+
+//
+// model loading and saving
+//
+
+enum llama_fver {
+    GGUF_FILE_VERSION_V1 = 1,
+    GGUF_FILE_VERSION_V2 = 2,
+};
+
+static const char * llama_file_version_name(llama_fver version) {
+    switch (version) {
+        case GGUF_FILE_VERSION_V1: return "GGUF V1 (support until nov 2023)";
+        case GGUF_FILE_VERSION_V2: return "GGUF V2 (latest)";
+    }
+
+    return "unknown";
+}
+
+static std::string llama_format_tensor_shape(const std::vector<int64_t> & ne) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%5" PRId64, ne.at(0));
+    for (size_t i = 1; i < ne.size(); i++) {
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, ne.at(i));
+    }
+    return buf;
+}
+
+static std::string llama_format_tensor_shape(const struct ggml_tensor * t) {
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%5" PRId64, t->ne[0]);
+    for (int i = 1; i < GGML_MAX_DIMS; i++) {
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, t->ne[i]);
+    }
+    return buf;
+}
+
+struct llama_model_loader {
+    int n_kv      = 0;
+    int n_tensors = 0;
+    int n_created = 0;
+
+    int64_t n_elements = 0;
+    size_t  n_bytes    = 0;
+
+    bool use_mmap = false;
+
+    llama_file  file;
+    llama_ftype ftype;
+    llama_fver  fver;
+
+    std::unique_ptr<llama_mmap> mapping;
+
+    struct gguf_context * ctx_gguf = NULL;
+    struct ggml_context * ctx_meta = NULL;
+
+    llama_model_loader(const std::string & fname, bool use_mmap) : file(fname.c_str(), "rb") {
+        struct gguf_init_params params = {
+            /*.no_alloc = */ true,
+            /*.ctx      = */ &ctx_meta,
+        };
+
+        ctx_gguf = gguf_init_from_file(fname.c_str(), params);
+        if (!ctx_gguf) {
+            throw std::runtime_error(format("%s: failed to load model from %s\n", __func__, fname.c_str()));
+        }
+
+        n_kv      = gguf_get_n_kv(ctx_gguf);
+        n_tensors = gguf_get_n_tensors(ctx_gguf);
+
+        fver = (enum llama_fver ) gguf_get_version(ctx_gguf);
+
+        for (int i = 0; i < n_tensors; i++) {
+            const char * name = gguf_get_tensor_name(ctx_gguf, i);
+            struct ggml_tensor * t = ggml_get_tensor(ctx_meta, name);
+            n_elements += ggml_nelements(t);
+            n_bytes    += ggml_nbytes(t);
+        }
+
+        LLAMA_LOG_INFO("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
+                __func__, n_kv, n_tensors, fname.c_str(), llama_file_version_name(fver));
+
+        // determine file type based on the number of tensors for each quantization and print meta data
+        // TODO: make optional
+        {
+            std::map<enum ggml_type, uint32_t> n_type;
+
+            uint32_t n_type_max = 0;
+            enum ggml_type type_max = GGML_TYPE_F32;
+
+            for (int i = 0; i < n_tensors; i++) {
+                const char * name = gguf_get_tensor_name(ctx_gguf, i);
+                struct ggml_tensor * meta = ggml_get_tensor(ctx_meta, name);
+
+                n_type[meta->type]++;
+
+                if (n_type_max < n_type[meta->type]) {
+                    n_type_max = n_type[meta->type];
+                    type_max   = meta->type;
+                }
+
+                LLAMA_LOG_INFO("%s: - tensor %4d: %32s %-8s [ %s ]\n", __func__, i, name, ggml_type_name(meta->type), llama_format_tensor_shape(meta).c_str());
+            }
+
+            switch (type_max) {
+                case GGML_TYPE_F32:  ftype = LLAMA_FTYPE_ALL_F32;       break;
+                case GGML_TYPE_F16:  ftype = LLAMA_FTYPE_MOSTLY_F16;    break;
+                case GGML_TYPE_Q4_0: ftype = LLAMA_FTYPE_MOSTLY_Q4_0;   break;
+                case GGML_TYPE_Q4_1: ftype = LLAMA_FTYPE_MOSTLY_Q4_1;   break;
+                case GGML_TYPE_Q5_0: ftype = LLAMA_FTYPE_MOSTLY_Q5_0;   break;
+                case GGML_TYPE_Q5_1: ftype = LLAMA_FTYPE_MOSTLY_Q5_1;   break;
+                case GGML_TYPE_Q8_0: ftype = LLAMA_FTYPE_MOSTLY_Q8_0;   break;
+                case GGML_TYPE_Q2_K: ftype = LLAMA_FTYPE_MOSTLY_Q2_K;   break;
+                case GGML_TYPE_Q3_K: ftype = LLAMA_FTYPE_MOSTLY_Q3_K_M; break;
+                case GGML_TYPE_Q4_K: ftype = LLAMA_FTYPE_MOSTLY_Q4_K_M; break;
+                case GGML_TYPE_Q5_K: ftype = LLAMA_FTYPE_MOSTLY_Q5_K_M; break;
+                case GGML_TYPE_Q6_K: ftype = LLAMA_FTYPE_MOSTLY_Q6_K;   break;
+                default:
+                     {
+                         LLAMA_LOG_WARN("%s: unknown type %s\n", __func__, ggml_type_name(type_max));
+                         ftype = LLAMA_FTYPE_ALL_F32;
+                     } break;
+            }
+
+            // this is a way to mark that we have "guessed" the file type
+            ftype = (llama_ftype) (ftype | LLAMA_FTYPE_GUESSED);
+
+            {
+                const int kid = gguf_find_key(ctx_gguf, "general.file_type");
+                if (kid >= 0) {
+                    ftype = (llama_ftype) gguf_get_val_u32(ctx_gguf, kid);
+                }
+            }
+
+            for (int i = 0; i < n_kv; i++) {
+                const char * name         = gguf_get_key(ctx_gguf, i);
+                const enum gguf_type type = gguf_get_kv_type(ctx_gguf, i);
+
+                LLAMA_LOG_INFO("%s: - kv %3d: %42s %-8s\n", __func__, i, name, gguf_type_name(type));
+            }
+
+            // print type counts
+            for (auto & kv : n_type) {
+                if (kv.second == 0) {
+                    continue;
+                }
+
+                LLAMA_LOG_INFO("%s: - type %4s: %4d tensors\n", __func__, ggml_type_name(kv.first), kv.second);
+            }
+        }
+
+        if (!llama_mmap::SUPPORTED) {
+            LLAMA_LOG_WARN("%s: mmap is not supported on this platform\n", __func__);
+            use_mmap = false;
+        }
+
+        this->use_mmap = use_mmap;
+    }
+
+    ~llama_model_loader() {
+        if (ctx_gguf) {
+            gguf_free(ctx_gguf);
+        }
+        if (ctx_meta) {
+            ggml_free(ctx_meta);
+        }
+    }
+
+```

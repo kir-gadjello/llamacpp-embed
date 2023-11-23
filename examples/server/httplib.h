@@ -186,6 +186,7 @@ using socket_t = SOCKET;
 #include <poll.h>
 #endif
 #include <csignal>
+#include <cstring>
 #include <pthread.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -748,6 +749,8 @@ public:
 
   std::function<TaskQueue *(void)> new_task_queue;
 
+  const char* call_json_request(const char* method, const char* path, const char* headers, const char* body);
+
 protected:
   bool process_request(Stream &strm, bool close_connection,
                        bool &connection_closed,
@@ -774,7 +777,6 @@ private:
                                 SocketOptions socket_options) const;
   int bind_internal(const std::string &host, int port, int socket_flags);
   bool listen_internal();
-
   bool routing(Request &req, Response &res, Stream &strm);
   bool handle_file_request(const Request &req, Response &res,
                            bool head = false);
@@ -6036,6 +6038,49 @@ inline bool Server::dispatch_request_for_content_reader(
     }
   }
   return false;
+}
+
+const char* Server::call_json_request(const char* method, const char* path, const char* headers, const char* body) {
+
+  Request req;
+  req.path = path;
+  req.body = body;
+  // treq.headers = headers;
+
+  req.set_header("Content-Type", "application/json");
+  req.set_header("Scheme", "http");
+  req.set_header("Host", "127.0.0.1");
+
+  req.content_length_ = strlen(body);
+
+  req.method = method;
+  req.target = path;
+  req.remote_addr = "127.0.0.1";
+  req.remote_port = 65000;
+  req.local_addr = "127.0.0.1";
+  req.local_port = 65000;
+  req.version = "HTTP/1.1";
+
+  Response res;
+
+  // Regular handler
+  if (req.method == "GET" || req.method == "HEAD") {
+    dispatch_request(req, res, get_handlers_);
+  } else if (req.method == "POST") {
+    dispatch_request(req, res, post_handlers_);
+  } else if (req.method == "PUT") {
+    dispatch_request(req, res, put_handlers_);
+  } else if (req.method == "DELETE") {
+    dispatch_request(req, res, delete_handlers_);
+  } else if (req.method == "OPTIONS") {
+    dispatch_request(req, res, options_handlers_);
+  } else if (req.method == "PATCH") {
+    dispatch_request(req, res, patch_handlers_);
+  } else {
+    res.status = 400;
+  }
+
+  return res.body.c_str();
 }
 
 inline bool

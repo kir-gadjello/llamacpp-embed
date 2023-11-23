@@ -806,23 +806,81 @@ struct llama_context_params llama_context_params_from_gpt_params(const gpt_param
     return cparams;
 }
 
+// std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_params(gpt_params & params) {
+//     auto mparams = llama_model_params_from_gpt_params(params);
+
+//     llama_model * model  = llama_load_model_from_file(params.model.c_str(), mparams);
+//     if (model == NULL) {
+//         fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
+//         return std::make_tuple(nullptr, nullptr);
+//     }
+
+//     auto cparams = llama_context_params_from_gpt_params(params);
+
+//     llama_context * lctx = llama_new_context_with_model(model, cparams);
+//     if (lctx == NULL) {
+//         fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, params.model.c_str());
+//         llama_free_model(model);
+//         return std::make_tuple(nullptr, nullptr);
+//     }
+
+//     for (unsigned int i = 0; i < params.lora_adapter.size(); ++i) {
+//         const std::string& lora_adapter = std::get<0>(params.lora_adapter[i]);
+//         float lora_scale = std::get<1>(params.lora_adapter[i]);
+//         int err = llama_model_apply_lora_from_file(model,
+//                                              lora_adapter.c_str(),
+//                                              lora_scale,
+//                                              ((i > 0) || params.lora_base.empty())
+//                                                 ? NULL
+//                                                 : params.lora_base.c_str(),
+//                                              params.n_threads);
+//         if (err != 0) {
+//             fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
+//             llama_free(lctx);
+//             llama_free_model(model);
+//             return std::make_tuple(nullptr, nullptr);
+//         }
+//     }
+
+//     if (params.ignore_eos) {
+//         params.sampling_params.logit_bias[llama_token_eos(lctx)] = -INFINITY;
+//     }
+
+//     {
+//         LOG("warming up the model with an empty run\n");
+
+//         std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
+//         llama_decode(lctx, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, 0));
+//         llama_kv_cache_tokens_rm(lctx, -1, -1);
+//         llama_reset_timings(lctx);
+//     }
+
+//     return std::make_tuple(model, lctx);
+// }
+
 std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_params(gpt_params & params) {
-    auto mparams = llama_model_params_from_gpt_params(params);
+   LOG("Entering llama_init_from_gpt_params function\n");
 
-    llama_model * model  = llama_load_model_from_file(params.model.c_str(), mparams);
-    if (model == NULL) {
-        fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
-        return std::make_tuple(nullptr, nullptr);
-    }
+   auto mparams = llama_model_params_from_gpt_params(params);
+   LOG("Successfully converted gpt_params to llama_model_params\n");
 
-    auto cparams = llama_context_params_from_gpt_params(params);
+   llama_model * model = llama_load_model_from_file(params.model.c_str(), mparams);
+   if (model == NULL) {
+       fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
+       return std::make_tuple(nullptr, nullptr);
+   }
+   LOG("Successfully loaded model from file\n");
 
-    llama_context * lctx = llama_new_context_with_model(model, cparams);
-    if (lctx == NULL) {
-        fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, params.model.c_str());
-        llama_free_model(model);
-        return std::make_tuple(nullptr, nullptr);
-    }
+   auto cparams = llama_context_params_from_gpt_params(params);
+   LOG("Successfully converted gpt_params to llama_context_params\n");
+
+   llama_context * lctx = llama_new_context_with_model(model, cparams);
+   if (lctx == NULL) {
+       fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, params.model.c_str());
+       llama_free_model(model);
+       return std::make_tuple(nullptr, nullptr);
+   }
+   LOG("Successfully created new context with model\n");
 
     for (unsigned int i = 0; i < params.lora_adapter.size(); ++i) {
         const std::string& lora_adapter = std::get<0>(params.lora_adapter[i]);
@@ -841,22 +899,27 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
             return std::make_tuple(nullptr, nullptr);
         }
     }
+   LOG("Successfully applied all lora adapters\n");
 
-    if (params.ignore_eos) {
-        params.sampling_params.logit_bias[llama_token_eos(lctx)] = -INFINITY;
-    }
+   if (params.ignore_eos) {
+       params.sampling_params.logit_bias[llama_token_eos(lctx)] = -INFINITY;
+   }
+   LOG("Successfully updated sampling parameters\n");
 
-    {
-        LOG("warming up the model with an empty run\n");
+   {
+       LOG("Warming up the model with an empty run\n");
 
-        std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
-        llama_decode(lctx, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, 0));
-        llama_kv_cache_tokens_rm(lctx, -1, -1);
-        llama_reset_timings(lctx);
-    }
+       std::vector<llama_token> tmp = { llama_token_bos(lctx), llama_token_eos(lctx), };
+       llama_decode(lctx, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) params.n_batch), 0, 0));
+       llama_kv_cache_tokens_rm(lctx, -1, -1);
+       llama_reset_timings(lctx);
+   }
+   LOG("Successfully warmed up the model\n");
 
-    return std::make_tuple(model, lctx);
+   LOG("Exiting llama_init_from_gpt_params function\n");
+   return std::make_tuple(model, lctx);
 }
+
 
 //
 // Vocab utils

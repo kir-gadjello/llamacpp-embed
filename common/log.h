@@ -9,6 +9,16 @@
 #include <algorithm>
 #include <cinttypes>
 
+#ifdef __ANDROID__
+    #include <android/log.h>
+    #define LOG_TAG "libllamarpc"
+    #define LOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, __VA_ARGS__)
+    #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+    #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+    #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+    #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#endif
+
 // --------------------------------
 //
 // Basic usage:
@@ -284,12 +294,19 @@ enum LogTriState
 // Main LOG macro.
 //  behaves like printf, and supports arguments the exact same way.
 //
+#ifdef __ANDROID__
+#ifndef _MSC_VER
+    #define LOG(...) LOGI(__VA_ARGS__, "")
+#else
+    #define LOG(str, ...) LOGI("%s" str, "", __VA_ARGS__, "")
+#endif
+#else
 #ifndef _MSC_VER
     #define LOG(...) LOG_IMPL(__VA_ARGS__, "")
 #else
     #define LOG(str, ...) LOG_IMPL("%s" str, "", __VA_ARGS__, "")
 #endif
-
+#endif
 // Main TEE macro.
 //  does the same as LOG
 //  and

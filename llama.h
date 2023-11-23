@@ -731,6 +731,8 @@ extern "C" {
 
     LLAMA_API void llama_dump_timing_info_yaml(FILE * stream, const struct llama_context * ctx);
 
+    LLAMA_API float get_current_model_load_progress();
+
 #ifdef __cplusplus
 }
 #endif

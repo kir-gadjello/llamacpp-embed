@@ -203,6 +203,11 @@ struct ggml_metal_context * ggml_metal_init(int n_cb) {
             GGML_METAL_LOG_INFO("%s: default.metallib not found, loading from source\n", __func__);
 
             NSString * sourcePath = [bundle pathForResource:@"ggml-metal" ofType:@"metal"];
+
+            if (sourcePath == nil) {
+                sourcePath = @"./ggml-metal.metal";
+            }
+
             GGML_METAL_LOG_INFO("%s: loading '%s'\n", __func__, [sourcePath UTF8String]);
             NSString * src = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&error];
             if (error) {

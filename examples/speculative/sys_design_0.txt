@@ -1,0 +1,24 @@
+I am a professional software developer writing a PoC for a new project. The project involves a programmatically accessed large language models to operate on a moderately sized codebase that is still OOM larger than an LLMs context.
+Let's assume we work with code in popular languages (C/C++, Python, Dart) and the main product function we want to implement is natural language driven feature development for these codebases. LLMs like you, Hermes, perform feature development just fine when the code and the task fit into the context length - you just need to prefix the code block with the task and accept the solution. The goal of this project is to allow the same function to be performed for large contexts containing many related (parts of) source code files.
+
+First, assumptions about the process of feature development:
+A1. A codebase is a collection of related code files available for modification, building into an artifact, or testing. 
+A2. The User proposes a software feature description (i.e. a task, a jira ticket) to be implemented in natural language. This description can be incomplete or contradicting in some cases. A useful system can analyze the codebase with user's task in mind and ask the User to provide clarifications if necessary.
+A3. All tasks require modifications of the codebase. Often, only one file needs to be modified, or even one function or one code block. But to perform the correct modification, the human or llm might need to read a large file and its dependents in other code files.
+A4. Usually it is necessary to implement a new feature without disrupting the logic and execution of the previously implemented features.
+A5. Some codebases support testing, and to ensure the correctness of newly added and previously added features, testcases can be added.
+
+My main idea is to implement the following programmatic feature development cycle with the LLM as a low-level primitive, here is the step-wise high-level summary:
+
+1. User inputs the task, and the codebase.
+2. The system analyzes the task and performs the initial task split into subtasks, asking back questions that can be asked with task description alone.
+3. The system performs high-level analysis of the codebase (this process might be cached for subsequent requests) and associates subtasks with specific source code files and functions likely to be modified. The high level analysis uses LLM to summarize the purpose of each file and its API surface used by other files. The analysis result should fit into one context window, so it is necessarily compressive in nature.
+
+Then, for each subtask
+
+4. The system chooses the set of relevant code files, by traversing imports with some stop condition
+3. Using the call graph or natural language LLM summaries, the system thins out the code of the
+4. The system performs indexing of the codebase
+5. The system 
+
+I need you to write
