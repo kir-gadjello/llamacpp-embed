@@ -7,8 +7,6 @@
 #include <string>
 #include <thread>
 
-static const size_t tensor_alignment = 32;
-
 struct lora_info {
     std::string filename;
     float scale;
@@ -240,14 +238,13 @@ static struct lora_data * load_lora(struct lora_info * info) {
     }
 
     struct ggml_init_params params_ggml;
-    params_ggml.mem_size   = ggml_tensor_overhead() * GGML_MAX_NODES;
+    params_ggml.mem_size   = ggml_tensor_overhead() * GGML_DEFAULT_GRAPH_SIZE;
     params_ggml.mem_buffer = NULL;
     params_ggml.no_alloc   = true;
     result->ctx = ggml_init(params_ggml);
 
-    uint32_t LLAMA_FILE_MAGIC_LORA = 0x67676C61; // 'ggla'
     uint32_t magic   = file.read_u32();
-    if (magic != LLAMA_FILE_MAGIC_LORA) {
+    if (magic != LLAMA_FILE_MAGIC_GGLA) {
         die_fmt("unexpected lora header file magic in '%s'", info->filename.c_str());
     }
     uint32_t version = file.read_u32();
@@ -309,7 +306,7 @@ static struct ggml_cgraph * build_graph_lora(
 ) {
     struct ggml_tensor * ab = ggml_mul_mat(ctx, lora_a, lora_b);
     if (scaling != 1.0f) {
-        ab = ggml_scale(ctx, ab, ggml_new_f32(ctx, scaling));
+        ab = ggml_scale(ctx, ab, scaling);
     }
     struct ggml_tensor * res = ggml_add_inplace(ctx, tensor, ab);
 
@@ -334,28 +331,18 @@ static bool apply_lora(struct ggml_tensor * tensor, struct lora_data * lora, int
     float scaling = lora->info.scale * (float)lora->lora_alpha / (float)lora->lora_r;
 
     struct ggml_init_params params;
-    params.mem_size   = GGML_OBJECT_SIZE + GGML_GRAPH_SIZE + ggml_tensor_overhead()*4 + GGML_MEM_ALIGN*5;
+    params.mem_size   = GGML_OBJECT_SIZE + ggml_graph_overhead() + ggml_tensor_overhead()*4 + GGML_MEM_ALIGN*5;
     params.mem_buffer = NULL;
     params.no_alloc   = true;
     struct ggml_context * ctx = NULL;
-    struct ggml_allocr * alloc = NULL;
-    struct ggml_cgraph * gf = NULL;
+    struct ggml_gallocr * alloc = NULL;
+    struct ggml_cgraph  * gf = NULL;
 
     ctx   = ggml_init(params);
-    alloc = ggml_allocr_new_measure(tensor_alignment);
+    alloc = ggml_gallocr_new(ggml_backend_cpu_buffer_type());
     gf    = build_graph_lora(ctx, tensor, lora_a, lora_b, scaling);
-    size_t alloc_size = ggml_allocr_alloc_graph(alloc, gf);
-    ggml_allocr_free(alloc);
-    ggml_free(ctx);
 
-    static std::vector<uint8_t> data_compute;
-    data_compute.resize(alloc_size + tensor_alignment);
-
-    ctx   = ggml_init(params);
-    alloc = ggml_allocr_new(data_compute.data(), data_compute.size(), tensor_alignment);
-    gf    = build_graph_lora(ctx, tensor, lora_a, lora_b, scaling);
-    ggml_allocr_alloc_graph(alloc, gf);
-    ggml_allocr_free(alloc);
+    ggml_gallocr_alloc_graph(alloc, gf);
 
     struct ggml_cplan cplan = ggml_graph_plan(gf, n_threads);
     static std::vector<uint8_t> data_work;
@@ -364,6 +351,7 @@ static bool apply_lora(struct ggml_tensor * tensor, struct lora_data * lora, int
 
     ggml_graph_compute(gf, &cplan);
 
+    ggml_gallocr_free(alloc);
     ggml_free(ctx);
     return true;
 }

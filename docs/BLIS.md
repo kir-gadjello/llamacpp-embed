@@ -23,7 +23,7 @@ Install BLIS:
 sudo make install
 ```
 
-We recommend using openmp since it's easier to modify the cores been used.
+We recommend using openmp since it's easier to modify the cores being used.
 
 ### llama.cpp compilation
 
@@ -49,7 +49,7 @@ According to the BLIS documentation, we could set the following
 environment variables to modify the behavior of openmp:
 
 ```bash
-export GOMP_GPU_AFFINITY="0-19"
+export GOMP_CPU_AFFINITY="0-19"
 export BLIS_NUM_THREADS=14
 ```
 

@@ -14,9 +14,6 @@ const char* tokenize(const char* req_json);
 
 const char *poll_system_status();
 
-// const char *json_rpc(const char *method, const char *path, const char *headers,
-//                      const char *body);
-
 const char* get_completion(const char* req_json);
 
 const char* async_completion_init(const char* req_json);

@@ -17,7 +17,7 @@ let n_parallel: Int = arguments.count > 3 && Int(arguments[3]) != nil ? Int(argu
 let n_len: Int = 32
 
 // init LLM
-llama_backend_init(false)
+llama_backend_init()
 defer {
     llama_backend_free()
 }
@@ -69,7 +69,7 @@ for id: llama_token in tokens {
 
 print("\n")
 
-var batch = llama_batch_init(max(Int32(tokens.count), Int32(n_parallel)), 0)
+var batch = llama_batch_init(max(Int32(tokens.count), Int32(n_parallel)), 0, 1)
 defer {
     llama_batch_free(batch)
 }
@@ -80,7 +80,12 @@ batch.n_tokens = Int32(tokens.count)
 for (i, token) in tokens.enumerated() {
     batch.token[i] = token
     batch.pos[i] = Int32(i)
-    batch.seq_id[i] = 0
+    batch.n_seq_id[i] = 1
+    // batch.seq_id[i][0] = 0
+    // TODO: is this the proper way to do this?
+    if let seq_id = batch.seq_id[i] {
+        seq_id[0] = 0
+    }
     batch.logits[i] = 0
 }
 
@@ -148,7 +153,7 @@ while n_cur <= n_len {
         // const llama_token new_token_id = llama_sample_token_greedy(ctx, &candidates_p);
 
         // is it an end of stream? -> mark the stream as finished
-        if new_token_id == llama_token_eos(context) || n_cur == n_len {
+        if llama_token_is_eog(model, new_token_id) || n_cur == n_len {
             i_batch[i] = -1
             // print("")
             if n_parallel > 1 {
@@ -169,7 +174,10 @@ while n_cur <= n_len {
         // push this new token for next evaluation
         batch.token[Int(batch.n_tokens)] = new_token_id
         batch.pos[Int(batch.n_tokens)] = n_cur
-        batch.seq_id[Int(batch.n_tokens)] = Int32(i)
+        batch.n_seq_id[Int(batch.n_tokens)] = 1
+        if let seq_id = batch.seq_id[Int(batch.n_tokens)] {
+            seq_id[0] = Int32(i)
+        }
         batch.logits[Int(batch.n_tokens)] = 1
 
         i_batch[i] = batch.n_tokens
@@ -207,9 +215,10 @@ print("decoded \(n_decode) tokens in \(String(format: "%.2f", Double(t_main_end 
 llama_print_timings(context)
 
 private func tokenize(text: String, add_bos: Bool) -> [llama_token] {
-    let n_tokens = text.count + (add_bos ? 1 : 0)
+    let utf8Count = text.utf8.count
+    let n_tokens = utf8Count + (add_bos ? 1 : 0)
     let tokens = UnsafeMutablePointer<llama_token>.allocate(capacity: n_tokens)
-    let tokenCount = llama_tokenize(model, text, Int32(text.count), tokens, Int32(n_tokens), add_bos)
+    let tokenCount = llama_tokenize(model, text, Int32(utf8Count), tokens, Int32(n_tokens), add_bos, /*special tokens*/ false)
     var swiftTokens: [llama_token] = []
     for i in 0 ..< tokenCount {
         swiftTokens.append(tokens[Int(i)])
@@ -220,20 +229,18 @@ private func tokenize(text: String, add_bos: Bool) -> [llama_token] {
 
 private func token_to_piece(token: llama_token, buffer: inout [CChar]) -> String? {
     var result = [CChar](repeating: 0, count: 8)
-    let nTokens = llama_token_to_piece(model, token, &result, Int32(result.count))
+    let nTokens = llama_token_to_piece(model, token, &result, Int32(result.count), false)
     if nTokens < 0 {
-        if result.count >= -Int(nTokens) {
-            result.removeLast(-Int(nTokens))
-        } else {
-            result.removeAll()
-        }
+        let actualTokensCount = -Int(nTokens)
+        result = .init(repeating: 0, count: actualTokensCount)
         let check = llama_token_to_piece(
             model,
             token,
             &result,
-            Int32(result.count)
+            Int32(result.count),
+            false
         )
-        assert(check == nTokens)
+        assert(check == actualTokensCount)
     } else {
         result.removeLast(result.count - Int(nTokens))
     }
@@ -251,5 +258,4 @@ private func token_to_piece(token: llama_token, buffer: inout [CChar]) -> String
         buffer = []
         return bufferString
     }
-    return nil
 }

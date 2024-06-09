@@ -1,5 +1,4 @@
 #include "ggml.h"
-#include "llama.h"
 
 #include <cstdio>
 #include <cinttypes>
@@ -143,7 +142,7 @@ static bool gguf_ex_read_0(const std::string & fname) {
 }
 
 // read and create ggml_context containing the tensors and their data
-static bool gguf_ex_read_1(const std::string & fname) {
+static bool gguf_ex_read_1(const std::string & fname, bool check_data) {
     struct ggml_context * ctx_data = NULL;
 
     struct gguf_init_params params = {
@@ -195,7 +194,7 @@ static bool gguf_ex_read_1(const std::string & fname) {
 
             struct ggml_tensor * cur = ggml_get_tensor(ctx_data, name);
 
-            printf("%s: tensor[%d]: n_dims = %d, name = %s, data = %p\n", __func__, i, cur->n_dims, cur->name, cur->data);
+            printf("%s: tensor[%d]: n_dims = %d, name = %s, data = %p\n", __func__, i, ggml_n_dims(cur), cur->name, cur->data);
 
             // print first 10 elements
             const float * data = (const float *) cur->data;
@@ -207,11 +206,12 @@ static bool gguf_ex_read_1(const std::string & fname) {
             printf("\n\n");
 
             // check data
-            {
+            if (check_data) {
                 const float * data = (const float *) cur->data;
                 for (int j = 0; j < ggml_nelements(cur); ++j) {
                     if (data[j] != 100 + i) {
                         fprintf(stderr, "%s: tensor[%d]: data[%d] = %f\n", __func__, i, j, data[j]);
+                        gguf_free(ctx);
                         return false;
                     }
                 }
@@ -229,8 +229,15 @@ static bool gguf_ex_read_1(const std::string & fname) {
 
 int main(int argc, char ** argv) {
     if (argc < 3) {
-        printf("usage: %s data.gguf r|w\n", argv[0]);
+        printf("usage: %s data.gguf r|w [n]\n", argv[0]);
+        printf("r: read data.gguf file\n");
+        printf("w: write data.gguf file\n");
+        printf("n: no check of tensor data\n");
         return -1;
+    }
+    bool check_data = true;
+    if (argc == 4) {
+        check_data = false;
     }
 
     const std::string fname(argv[1]);
@@ -242,7 +249,7 @@ int main(int argc, char ** argv) {
         GGML_ASSERT(gguf_ex_write(fname) && "failed to write gguf file");
     } else if (mode == "r") {
         GGML_ASSERT(gguf_ex_read_0(fname) && "failed to read gguf file");
-        GGML_ASSERT(gguf_ex_read_1(fname) && "failed to read gguf file");
+        GGML_ASSERT(gguf_ex_read_1(fname, check_data) && "failed to read gguf file");
     }
 
     return 0;
